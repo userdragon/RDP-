@@ -61,6 +61,9 @@ jobs:
 
     - name: Package portable version
       run: |
+        if (-not (Test-Path "dist")) {
+          New-Item -ItemType Directory -Path "dist" | Out-Null
+        }
         7z a -tzip sync-remote-suite-${{ env.VERSION }}-windows.zip dist/*
       shell: pwsh
 
