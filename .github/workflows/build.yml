@@ -1,101 +1,93 @@
-name: Build Sync Remote Control Suite
+name: Build Windows Sync Remote Control Suite
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]  # 版本标签触发正式发布
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            artifact-suffix: linux
-          - os: windows-latest
-            artifact-suffix: windows
-          - os: macos-latest
-            artifact-suffix: macos
-
+  build-windows:
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v3
       with:
-        fetch-depth: 0  # 获取完整历史用于版本号生成
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-        cache: 'pip'  # 缓存依赖加速构建
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller setuptools wheel
+      shell: pwsh
 
     - name: Lint and test
       run: |
         pip install flake8 pytest
+        $env:PYTHONPATH = "$($env:PYTHONPATH);$(Get-Location)"
         flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
         pytest tests/ -v
+      shell: pwsh
 
     - name: Get version
       id: get_version
       run: |
-        if [[ $GITHUB_REF == refs/tags/v* ]]; then
-          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
-        else
-          echo "VERSION=dev-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-        fi
+        if ($env:GITHUB_REF -like "refs/tags/v*") {
+          $version = $env:GITHUB_REF -replace "refs/tags/v", ""
+          echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+        } else {
+          $commitHash = git rev-parse --short HEAD
+          echo "VERSION=dev-$commitHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+        }
+      shell: pwsh
 
     - name: Build executable with PyInstaller
       run: |
-        # 构建主控端
-        pyinstaller --onefile --name=sync-remote-master \
-          --add-data "src/resources/*:resources" \
-          --icon=src/resources/icons/master_icon.ico \
+        pyinstaller --onefile --name=sync-remote-master `
+          --add-data "src/resources/*;resources" `
+          --icon=src/resources/icons/master_icon.ico `
           src/master.py
         
-        # 构建被控端
-        pyinstaller --onefile --name=sync-remote-slave \
-          --add-data "src/resources/*:resources" \
-          --icon=src/resources/icons/slave_icon.ico \
+        pyinstaller --onefile --name=sync-remote-slave `
+          --add-data "src/resources/*;resources" `
+          --icon=src/resources/icons/slave_icon.ico `
           src/slave.py
+      shell: pwsh
 
     - name: Package portable version
       run: |
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          7z a -tzip sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip dist/*
-        else
-          zip -r sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip dist/*
-        fi
+        7z a -tzip sync-remote-suite-${{ env.VERSION }}-windows.zip dist/*
+      shell: pwsh
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4  # 升级到 v4
+      uses: actions/upload-artifact@v4  # 已升级到v4
       with:
-        name: sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}
+        name: sync-remote-suite-${{ env.VERSION }}-windows
         path: |
-          sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip
+          sync-remote-suite-${{ env.VERSION }}-windows.zip
           dist/
 
   release:
-    needs: build
+    needs: build-windows
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4  # 升级到 v4
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4  # 已升级到v4
         with:
+          name: sync-remote-suite-${{ env.VERSION }}-windows
           path: artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/**/*.zip
+            artifacts/*.zip
           generate_release_notes: true
