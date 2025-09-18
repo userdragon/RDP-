@@ -30,9 +30,11 @@ jobs:
     - name: Lint and test
       run: |
         pip install flake8 pytest
+        echo "Adding project root to PYTHONPATH"
+        $env:PYTHONPATH += ";$($pwd.Path)"  # Windows PowerShell语法
         flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
         pytest tests/ -v
-
+      shell: pwsh
     - name: Get version
       id: get_version
       run: |
