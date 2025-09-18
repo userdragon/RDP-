@@ -3,102 +3,72 @@ name: Build Sync Remote Control Suite
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]  # 版本标签触发正式发布
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            artifact-suffix: linux
-            pyinstaller-sep: ":"  # Linux/macOS路径分隔符
-          - os: windows-latest
-            artifact-suffix: windows
-            pyinstaller-sep: ";"  # Windows路径分隔符
-          - os: macos-latest
-            artifact-suffix: macos
-            pyinstaller-sep: ":"  # macOS路径分隔符
-
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v3
       with:
-        fetch-depth: 0  # 获取完整历史用于版本号生成
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-        cache: 'pip'  # 缓存依赖加速构建
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # 确保PyInstaller版本与requirements一致
-        pip install pyinstaller==5.13.2
+        pip install pyinstaller setuptools wheel
 
     - name: Lint and test
       run: |
         pip install flake8 pytest
-        # 代码检查（仅检查严重错误）
         flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
-        # 运行单元测试
         pytest tests/ -v
 
     - name: Get version
       id: get_version
       run: |
-        if [[ $GITHUB_REF == refs/tags/v* ]]; then
-          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
-        else
-          echo "VERSION=dev-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-        fi
-      shell: bash
-
-    - name: Verify file structure (debug)
-      run: |
-        echo "Checking source files..."
-        ls -l src/*.py
-        echo "Checking resource files..."
-        ls -lR src/resources/
-      shell: bash
+        if ($env:GITHUB_REF -like 'refs/tags/v*') {
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+        } else {
+          $version = "dev-$(git rev-parse --short HEAD)"
+        }
+        echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      shell: pwsh
 
     - name: Build executable with PyInstaller
       run: |
-        # 构建主控端
-        pyinstaller --onefile --name=sync-remote-master \
-          --add-data "src/resources/*${{ matrix.pyinstaller-sep }}resources" \
-          --icon=src/resources/icons/master_icon.ico \
+        pyinstaller --onefile --name=sync-remote-master `
+          --add-data "src/resources/*;resources" `
+          --icon=src/resources/icons/master_icon.ico `
           src/master.py
         
-        # 构建被控端
-        pyinstaller --onefile --name=sync-remote-slave \
-          --add-data "src/resources/*${{ matrix.pyinstaller-sep }}resources" \
-          --icon=src/resources/icons/slave_icon.ico \
+        pyinstaller --onefile --name=sync-remote-slave `
+          --add-data "src/resources/*;resources" `
+          --icon=src/resources/icons/slave_icon.ico `
           src/slave.py
+      shell: pwsh
 
     - name: Package portable version
       run: |
-        # 创建压缩包（包含所有可执行文件）
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          7z a -tzip sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip dist/*
-        else
-          zip -r sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip dist/*
-        fi
+        7z a -tzip sync-remote-suite-${{ env.VERSION }}-windows.zip dist/*
+      shell: pwsh
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # 已升级到v4
       with:
-        name: sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}
+        name: sync-remote-suite-${{ env.VERSION }}-windows
         path: |
-          sync-remote-suite-${{ env.VERSION }}-${{ matrix.artifact-suffix }}.zip
+          sync-remote-suite-${{ env.VERSION }}-windows.zip
           dist/
-        retention-days: 14  #  artifacts保留14天
 
   release:
     needs: build
@@ -106,12 +76,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4  # 已升级到v4
         with:
           path: artifacts
-
-      - name: List downloaded artifacts (debug)
-        run: ls -lR artifacts/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -119,5 +86,3 @@ jobs:
           files: |
             artifacts/**/*.zip
           generate_release_notes: true
-          draft: false
-          prerelease: false
